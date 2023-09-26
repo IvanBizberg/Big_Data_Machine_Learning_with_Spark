@@ -3,7 +3,7 @@ title: "Big Data Machine Learning with Spark"
 format: html
 ---
 
-
+# Libraries
 ```{r}
 library(tidyverse)
 library(tidymodels)
@@ -11,11 +11,11 @@ library(tidypredict)
 library(finetune)
 library(sparklyr)
 library(DBI)
-options(tidymodels.dark = TRUE)
 
 df <- read_csv("Data/customer_churn.csv")
 ```
 
+## Check and preprocess data
 ```{r}
 is.na(df) %>% colSums()
 
@@ -25,16 +25,14 @@ df <- df %>%
   drop_na()
 ```
 
-```{r}
-df
-```
-
+# Split data
 ```{r}
 model_split <- initial_split(df %>% select(-customerID), strata = Churn)
 train_data <- training(model_split)
 k_folds_data <- vfold_cv(train_data)
 ```
 
+# Create model
 ```{r}
 mars_model <- mars(num_terms = tune(), prod_degree = tune()) %>% 
   set_mode("classification") %>% 
@@ -48,17 +46,14 @@ rec %>% prep() %>% juice()
 mars_res <- tune_sim_anneal(mars_model, rec, k_folds_data, metrics = metric_set(roc_auc))
 ```
 
-
+## See tuning results
 ```{r}
 autoplot(mars_res)
-```
-
-```{r}
 show_best(mars_res, "roc_auc")
 ```
 
 
-
+# Run tunned model
 ```{r}
 mars(num_terms = 5, prod_degree = 1) %>% 
   set_mode("classification") %>% 
@@ -67,6 +62,7 @@ mars(num_terms = 5, prod_degree = 1) %>%
   vip::vip()
 ```
 
+## Create worflow
 ```{r}
 workflow() %>% 
   add_model(mars(num_terms = 5, prod_degree = 1) %>% 
@@ -77,9 +73,7 @@ workflow() %>%
   collect_metrics()
 ```
 
-
-
-
+# Create SQL model 
 ```{r}
 mars(num_terms = 5, prod_degree = 1) %>% 
   set_mode("classification") %>% 
@@ -88,14 +82,14 @@ mars(num_terms = 5, prod_degree = 1) %>%
   tidypredict_sql(dbplyr::simulate_mysql())
 ```
 
-
+# Create sql database to test ML model
 ```{r}
 con <- dbConnect(RSQLite::SQLite(), dbname = ":memory:")
 
 copy_to(con, df)
 ```
 
-
+# Test model on database
 ```{sql, connection = con, output.var = "sql_pred"}
 SELECT 1.0 - 1.0 / (1.0 + EXP(0.156081428035868 + (CASE WHEN (`tenure` < 10.0) THEN (10.0 - `tenure`) WHEN NOT(`tenure` < 10.0) THEN (0.0) END * 0.0310290972457379) + (CASE WHEN (`tenure` > 10.0) THEN (`tenure` - 10.0) WHEN NOT(`tenure` > 10.0) THEN (0.0) END * -0.00375498053077481) + (`InternetService_Fiber.optic` * 0.236063007144752) + (`PaymentMethod_Electronic.check` * 0.134176965932244))) AS CHURN_PROB, customerID
 FROM (
@@ -110,7 +104,7 @@ FROM (
 ```
 
 
-
+# Compare sql model with tidymodel model
 ```{r}
 mars(num_terms = 5, prod_degree = 1) %>% 
   set_mode("classification") %>% 
@@ -158,7 +152,7 @@ mars(num_terms = 5, prod_degree = 1) %>%
   tidy()
 ```
 
-
+# Try to adjust SQL model
 ```{sql, connection = con, output.var = "sql_adjust"}
 WITH  
   DATA AS (
@@ -202,10 +196,8 @@ mars(num_terms = 5, prod_degree = 1) %>%
 ```
 
 
-
+# Big data ML with Spark
 ```{r}
-# spark_install(version = "2.1.0")
-
 sc <- spark_connect(master = "local")
 
 churn_tbl <- copy_to(sc, df)
@@ -219,7 +211,7 @@ glm(Churn ~., data = rec %>% prep() %>% juice(), family = binomial()) %>%
   filter(p.value <= 0.05)
 ```
 
-
+# Create recipe
 ```{r}
 spark_dplyr <- churn_tbl %>% 
   mutate(contrct_one_year = if_else(Contract == "One year", 1, 0),
@@ -235,7 +227,7 @@ ft_dplyr_transformer(sc, spark_dplyr) %>%
   ml_param("statement")
 ```
 
-
+# Create a workflow
 ```{r}
 churn_pipeline <- ml_pipeline(sc) %>% 
   ft_dplyr_transformer(tbl = spark_dplyr) %>% 
@@ -254,6 +246,7 @@ res <- spark_pred %>%
   collect()
 ```
 
+# Check predictions
 ```{r}
 res %>% mutate(probability = map_dbl(probability, ~pluck(.x, 2)))
 ```
